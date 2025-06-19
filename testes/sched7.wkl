@@ -1,0 +1,22 @@
+3
+18
+90
+2
+6
+0 1 1 0 0 0 
+1 0 0 1 0 0 
+1 0 0 0 1 0 
+0 1 0 0 0 1 
+0 0 1 0 0 0 
+0 0 0 1 0 0 
+10
+10 pac 701 org 0 dst 5
+12 pac 702 org 1 dst 4
+14 pac 703 org 2 dst 3
+18 pac 704 org 5 dst 0
+20 pac 705 org 4 dst 2
+22 pac 706 org 3 dst 1
+25 pac 707 org 0 dst 4
+30 pac 708 org 1 dst 5
+35 pac 709 org 2 dst 0
+40 pac 710 org 3 dst 4

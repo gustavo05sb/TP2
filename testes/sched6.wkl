@@ -1,0 +1,16 @@
+2
+10
+50
+1
+4
+0 1 0 0 
+1 0 1 0 
+0 1 0 1 
+0 0 1 0 
+6
+5 pac 601 org 0 dst 3
+8 pac 602 org 1 dst 2
+10 pac 603 org 3 dst 1
+12 pac 604 org 0 dst 2
+15 pac 605 org 2 dst 0
+20 pac 606 org 1 dst 0
