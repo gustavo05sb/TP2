@@ -1,9 +1,20 @@
 #include "Simulador.hpp"
 #include "Logger.hpp"
-#include "Utils.hpp"
+#include "Estruturas.hpp"
 #include <iostream>
 
-// --- IMPLEMENTAÇÃO DO SIMULADOR ---
+// --- Função auxiliar para saber se ainda há pacotes em armazéns ---
+bool Simulador::haPacotesEmArmazens() const {
+    for (int i = 0; i < numArmazens; ++i) {
+        const Armazem* arm = armazens[i];
+        for (int j = 0; j < arm->getNumSecoes(); ++j) {
+            const SecaoArmazem* secao = arm->getSecao(j);
+            if (secao->qtdPacotes > 0) return true;
+        }
+    }
+    return false;
+}
+
 Simulador::Simulador(int capTransp, double latTransp, double interTransp, double custoRem, int nArmazens, int** matrizAdj) 
     : tempoAtual(0.0), capacidadeTransporte(capTransp), latenciaTransporte(latTransp), 
       intervaloTransportes(interTransp), custoRemocao(custoRem), numArmazens(nArmazens) {
@@ -28,15 +39,20 @@ Simulador::Simulador(int capTransp, double latTransp, double interTransp, double
 Simulador::~Simulador() {
     for (int i = 0; i < this->numArmazens; ++i) delete this->armazens[i];
     delete[] this->armazens;
-
-    // A lista mestra é a "dona" de todos os pacotes, então ela os deleta.
     for (int i = 0; i < this->numTotalPacotes; ++i) delete this->todosOsPacotes[i];
     delete[] this->todosOsPacotes;
 }
 
 void Simulador::notificarEntregaDePacote() { this->pacotesEntregues++; }
-
-bool Simulador::todosPacotesEntregues() const { return this->pacotesEntregues >= this->numTotalPacotes; }
+bool Simulador::todosPacotesEntregues() const { return (this->numTotalPacotes > 0) && (this->pacotesEntregues >= this->numTotalPacotes); }
+double Simulador::getTempoAtual() const { return tempoAtual; }
+Armazem* Simulador::getArmazem(int id) { return (id >= 0 && id < numArmazens) ? armazens[id] : nullptr; }
+int Simulador::getNumArmazens() const { return numArmazens; }
+int Simulador::getNumTotalPacotes() const { return numTotalPacotes; }
+int Simulador::getCapacidadeTransporte() const { return capacidadeTransporte; }
+double Simulador::getLatenciaTransporte() const { return latenciaTransporte; }
+double Simulador::getIntervaloTransportes() const { return intervaloTransportes; }
+double Simulador::getCustoRemocao() const { return custoRemocao; }
 
 void Simulador::adicionarPacoteNaListaMestra(Pacote* p) {
     if (this->numTotalPacotes == this->capacidadePacotes) {
@@ -57,32 +73,23 @@ void Simulador::adicionarPacoteInicial(Pacote* p) {
 void Simulador::agendarEvento(Evento* ev) { this->escalonador.agendar(ev); }
 
 void Simulador::executar() {
-    std::cout << "\n--- INICIANDO EXECUCAO DA SIMULACAO ---\n" << std::endl;
-    const long long LIMITE_MAX_ITERACOES = 1000000;
-    long long iteracoes = 0;
-
-    while (escalonador.temEventos() && !todosPacotesEntregues() && iteracoes < LIMITE_MAX_ITERACOES) {
+    while (escalonador.temEventos()) {
         Evento* proximoEvento = escalonador.proximo();
         if (proximoEvento->getTempo() > this->tempoAtual) this->tempoAtual = proximoEvento->getTempo();
         proximoEvento->processar(this);
-        delete proximoEvento; // O evento é usado e descartado.
-        iteracoes++;
+        delete proximoEvento;
+        if (todosPacotesEntregues()) {
+            escalonador.limpar();
+            break;
+        }
     }
-    
-    std::cout << "\n--- SIMULACAO CONCLUIDA NO TEMPO " << static_cast<int>(this->tempoAtual) << " ---\n" << std::endl;
-    std::cout << "Relatorio Final:" << std::endl;
-    std::cout << " - Eventos processados: " << iteracoes << std::endl;
-    std::cout << " - Pacotes entregues: " << this->pacotesEntregues << " de " << this->numTotalPacotes << std::endl;
-    if (iteracoes >= LIMITE_MAX_ITERACOES) std::cerr << "AVISO: Simulacao interrompida por atingir o limite maximo de iteracoes!" << std::endl;
-    else if (todosPacotesEntregues()) std::cout << "INFO: Simulacao encerrada com sucesso. Todos os pacotes foram entregues." << std::endl;
-    else std::cout << "AVISO: Simulacao encerrada, mas " << this->numTotalPacotes - this->pacotesEntregues << " pacotes nao foram entregues." << std::endl;
 }
 
-// --- IMPLEMENTAÇÃO DOS EVENTOS ---
+// ---------------------- EVENTOS ----------------------
+
 EventoChegadaPacote::EventoChegadaPacote(double tempo, Pacote* p) : Evento(tempo), pacote(p) {}
 
 void EventoChegadaPacote::processar(Simulador* sim) {
-    pacote->avancarEtapaRota();
     int idArmazemChegada = pacote->getIdArmazemAtual();
 
     if (pacote->chegouAoDestinoFinal()) {
@@ -95,53 +102,80 @@ void EventoChegadaPacote::processar(Simulador* sim) {
             Logger::armazenado(sim->getTempoAtual(), pacote->getId(), idArmazemChegada, proximoDestino);
             armazem->receberPacote(pacote);
         }
+        // Só avança a etapa da rota após armazenar
+        pacote->avancarEtapaRota();
     }
 }
 
 EventoTransporteDiario::EventoTransporteDiario(double tempo) : Evento(tempo) {}
 
 void EventoTransporteDiario::processar(Simulador* sim) {
+    if (sim->todosPacotesEntregues() || !sim->haPacotesEmArmazens()) {
+        return;
+    }
     double tempoAtual = sim->getTempoAtual();
+    int capacidade = sim->getCapacidadeTransporte();
+
     for (int idOrigem = 0; idOrigem < sim->getNumArmazens(); ++idOrigem) {
         Armazem* origem = sim->getArmazem(idOrigem);
         for (int j = 0; j < origem->getNumVizinhos(); ++j) {
             int idDestino = origem->getVizinho(j);
             int quantidadeNaSecao = 0;
-            Pacote** pacotesRemovidos = origem->pegarPacotesParaTransporte(idDestino, 9999, quantidadeNaSecao);
+            Pacote** pilhaLifo = origem->pegarPacotesParaTransporteLIFO(idDestino, quantidadeNaSecao);
 
-            if (quantidadeNaSecao == 0) continue;
-
-            double tempoDePartida = tempoAtual;
-            for (int k = 0; k < quantidadeNaSecao; k++) {
-                double tempoDeRemocao = tempoAtual + (k * sim->getCustoRemocao());
-                Logger::removido(tempoDeRemocao, pacotesRemovidos[k]->getId(), idOrigem, idDestino);
-                tempoDePartida = tempoDeRemocao;
+            if (quantidadeNaSecao == 0) {
+                delete[] pilhaLifo;
+                continue;
             }
-            
-            int capacidade = sim->getCapacidadeTransporte();
-            int pacotesParaTransportar = (quantidadeNaSecao < capacidade) ? quantidadeNaSecao : capacidade;
-            
-            for (int k = 0; k < pacotesParaTransportar; ++k) {
-                Pacote* pacoteViajante = pacotesRemovidos[k]; // Política FIFO
-                Logger::emTransito(tempoDePartida, pacoteViajante->getId(), idOrigem, idDestino);
-                pacoteViajante->setIdArmazemAtual(idDestino);
+
+            // 1. Remoção LIFO: todos os pacotes removidos da pilha (topo para base)
+            double tempoRemocaoBase = tempoAtual;
+            for (int k = 0; k < quantidadeNaSecao; ++k) {
+                double tempoDeRemocao = tempoRemocaoBase + ((k + 1) * sim->getCustoRemocao());
+                Logger::removido(tempoDeRemocao, pilhaLifo[k]->getId(), idOrigem, idDestino);
+            }
+            double tempoDePartida = tempoRemocaoBase + (quantidadeNaSecao * sim->getCustoRemocao());
+
+            // 2. Transporte LIFO: do fundo da pilha (último removido) até o topo, até a capacidade
+            int enviados = 0;
+            for (int k = quantidadeNaSecao - 1; k >= 0 && enviados < capacidade; --k, ++enviados) {
+                Logger::emTransito(tempoDePartida, pilhaLifo[k]->getId(), idOrigem, idDestino);
+                pilhaLifo[k]->setIdArmazemAtual(idDestino);
                 double tempoDeChegada = tempoDePartida + sim->getLatenciaTransporte();
-                sim->agendarEvento(new EventoChegadaPacote(tempoDeChegada, pacoteViajante));
+                sim->agendarEvento(new EventoChegadaPacote(tempoDeChegada, pilhaLifo[k]));
             }
-            
-            int pacotesParaRearmazenar = quantidadeNaSecao - pacotesParaTransportar;
-            if (pacotesParaRearmazenar > 0) {
-                Pacote** sobraram = &pacotesRemovidos[pacotesParaTransportar];
-                Utils::ordenarPacotesPorId(sobraram, pacotesParaRearmazenar);
-                for (int k = 0; k < pacotesParaRearmazenar; ++k) {
-                    Logger::rearmazenado(tempoDePartida, sobraram[k]->getId(), idOrigem, idDestino);
-                    origem->receberPacote(sobraram[k]);
+
+            // 3. Rearmazenamento: os que sobraram, ordenados por ID crescente
+            if (enviados < quantidadeNaSecao) {
+                // Copia os pacotes restantes para um array temporário
+                int qtdRearmazenar = quantidadeNaSecao - enviados;
+                Pacote** paraRearmazenar = new Pacote*[qtdRearmazenar];
+                int idx = 0;
+                for (int k = 0; k < quantidadeNaSecao - enviados; ++k)
+                    paraRearmazenar[idx++] = pilhaLifo[k];
+
+                // Ordena por ID crescente (bubble sort simples)
+                for (int a = 0; a < qtdRearmazenar - 1; ++a) {
+                    for (int b = 0; b < qtdRearmazenar - a - 1; ++b) {
+                        if (paraRearmazenar[b]->getId() > paraRearmazenar[b+1]->getId()) {
+                            Pacote* tmp = paraRearmazenar[b];
+                            paraRearmazenar[b] = paraRearmazenar[b+1];
+                            paraRearmazenar[b+1] = tmp;
+                        }
+                    }
                 }
+
+                for (int k = 0; k < qtdRearmazenar; ++k) {
+                    Logger::rearmazenado(tempoDePartida, paraRearmazenar[k]->getId(), idOrigem, idDestino);
+                    origem->receberPacote(paraRearmazenar[k]);
+                }
+                delete[] paraRearmazenar;
             }
-            delete[] pacotesRemovidos;
+            delete[] pilhaLifo;
         }
     }
-    
+
+    // Só agenda novo transporte se ainda houver pacotes em armazéns
     if (!sim->todosPacotesEntregues()) {
         double proximoTempo = sim->getTempoAtual() + sim->getIntervaloTransportes();
         sim->agendarEvento(new EventoTransporteDiario(proximoTempo));

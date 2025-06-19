@@ -1,4 +1,5 @@
 #include "Evento.hpp"
-
-// É necessário inicializar o membro estático da classe fora da declaração da classe.
 long long Evento::proximoId = 0;
+Evento::Evento(double tempo) : tempo(tempo), id(proximoId++) {}
+double Evento::getTempo() const { return tempo; }
+long long Evento::getId() const { return id; }
